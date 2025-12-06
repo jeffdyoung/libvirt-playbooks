@@ -1,0 +1,75 @@
+---
+# Example host_vars file for aarch64-002.sys.eng.rdu2.dc.redhat.com
+# This file shows how to define VMs for a specific host
+# Copy this to host_vars/aarch64-002.sys.eng.rdu2.dc.redhat.com.yml to use it
+
+# Define VMs for this host
+vms:
+  - name: ocp-master-1
+    memory: 16384  # 16 GB
+    vcpus: 8
+    disk_size: 120
+    autostart: true
+    # Network configuration (optional)
+    # If not specified, a single NIC on 'default' network with random MAC will be created
+    networks:
+      - name: default
+        mac: "52:54:00:11:22:01"
+      - name: storage-network
+        mac: "52:54:00:aa:bb:01"
+
+  - name: ocp-master-2
+    memory: 16384
+    vcpus: 8
+    disk_size: 120
+    autostart: true
+    networks:
+      - name: default
+        mac: "52:54:00:11:22:02"
+      - name: storage-network
+        mac: "52:54:00:aa:bb:02"
+
+  - name: ocp-master-3
+    memory: 16384
+    vcpus: 8
+    disk_size: 120
+    autostart: true
+    networks:
+      - name: default
+        mac: "52:54:00:11:22:03"
+      - name: storage-network
+        mac: "52:54:00:aa:bb:03"
+
+  - name: ocp-worker-1
+    memory: 32768  # 32 GB
+    vcpus: 16
+    disk_size: 200
+    autostart: true
+    networks:
+      - name: default
+        mac: "52:54:00:11:22:04"
+      - name: storage-network
+        mac: "52:54:00:aa:bb:04"
+
+  - name: ocp-worker-2
+    memory: 32768
+    vcpus: 16
+    disk_size: 200
+    autostart: true
+    networks:
+      - name: default
+        mac: "52:54:00:11:22:05"
+      - name: storage-network
+        mac: "52:54:00:aa:bb:05"
+
+  - name: ocp-infra-1
+    memory: 8192  # 8 GB
+    vcpus: 4
+    disk_size: 100
+    autostart: true
+    # Single network example (MAC address is optional)
+    networks:
+      - name: default
+
+# Optional: Override default storage path for this host
+# libvirt_storage_path: /mnt/nvme/libvirt

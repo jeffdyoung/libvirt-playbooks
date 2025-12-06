@@ -1,0 +1,56 @@
+# Example: ISO image definitions for VM installation
+# Define ISOs to download and manage in libvirt_storage_path
+
+# Example 1: Basic ISO download
+iso_images:
+  - url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/iso/Fedora-Server-dvd-x86_64-43-1.6.iso"
+    alias: "fedora43x86.iso"
+
+# Example 2: Multiple ISOs with checksums
+iso_images:
+  - url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/iso/Fedora-Server-dvd-x86_64-43-1.6.iso"
+    alias: "fedora43x86.iso"
+    checksum: "sha256:1234567890abcdef..."  # Optional: verify download integrity
+
+  - url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Server/aarch64/iso/Fedora-Server-dvd-aarch64-43-1.6.iso"
+    alias: "fedora43arm.iso"
+    checksum: "sha256:abcdef1234567890..."
+
+# Example 3: Multiple distributions
+iso_images:
+  # Fedora Server
+  - url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/iso/Fedora-Server-dvd-x86_64-43-1.6.iso"
+    alias: "fedora43x86.iso"
+
+  # CentOS Stream
+  - url: "https://mirrors.centos.org/mirrorlist?path=/9-stream/BaseOS/x86_64/iso/CentOS-Stream-9-latest-x86_64-dvd1.iso"
+    alias: "centos-stream-9.iso"
+
+  # Ubuntu Server
+  - url: "https://releases.ubuntu.com/22.04/ubuntu-22.04.3-live-server-amd64.iso"
+    alias: "ubuntu-22.04-server.iso"
+
+  # RHEL (requires subscription/access)
+  - url: "https://access.redhat.com/downloads/..."
+    alias: "rhel9.iso"
+
+# ISO parameters explained:
+# - url: (required) Direct download URL for the ISO image
+# - alias: (required) Filename to save the ISO as in libvirt_storage_path
+# - checksum: (optional) Checksum for verification (format: "algorithm:hash")
+#             Supported: sha256, sha1, md5
+#             Example: "sha256:abc123..."
+
+# Notes:
+# 1. ISOs are downloaded to libvirt_storage_path (default: ~/libvirt)
+# 2. Large ISOs may take time to download (timeout set to 1 hour)
+# 3. Downloads are idempotent - won't re-download if file exists
+# 4. Use checksums to verify download integrity
+# 5. ISOs get proper permissions and SELinux contexts automatically
+# 6. File ownership matches the libvirt_storage_path location (user for /home, root for /var)
+
+# Usage:
+# ansible-playbook -i inventory manage_host_storage.yml --tags iso
+
+# To download specific ISOs only:
+# ansible-playbook -i inventory manage_host_storage.yml --tags iso,download

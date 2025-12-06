@@ -1,0 +1,29 @@
+---
+# Example VM definitions for reference
+# Copy these to host_vars/ and customize as needed
+
+# Example 1: Minimal Fedora VM
+fedora_minimal:
+  vm_name: fedora-minimal
+  vm_memory_mb: 1024
+  vm_vcpus: 1
+  vm_disk_size_gb: 10
+  vm_autostart: false
+
+# Example 2: Standard development VM
+fedora_dev:
+  vm_name: fedora-dev
+  vm_memory_mb: 4096
+  vm_vcpus: 4
+  vm_disk_size_gb: 50
+  vm_autostart: false
+  vm_user: fedora
+
+# Example 3: Large server VM
+fedora_server:
+  vm_name: fedora-server
+  vm_memory_mb: 8192
+  vm_vcpus: 8
+  vm_disk_size_gb: 100
+  vm_autostart: true
+  vm_user: fedora

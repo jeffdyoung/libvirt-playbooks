@@ -1,0 +1,99 @@
+---
+# Extended inventory configuration for multiple hosts
+# All hosts are treated as remote (even localhost uses SSH to 127.0.0.1)
+# This is a YAML example showing how to organize multiple Fedora 42+ hosts
+
+libvirt_hosts:
+  hosts:
+    # Local machine (accessed via SSH to 127.0.0.1)
+    local:
+      ansible_host: 127.0.0.1
+      ansible_user: root
+      ansible_port: 22
+      # Host-specific variables (optional)
+      vm_default_vcpus: 2
+      vm_default_memory_mb: 2048
+      # VMs to create on this host
+      vms:
+        - name: local-dev-vm
+          memory: 2048
+          vcpus: 2
+          disk_size: 20
+          autostart: false
+        - name: local-test-vm
+          memory: 1024
+          vcpus: 1
+          disk_size: 15
+          autostart: false
+
+    # Example: aarch64 development host in RDU datacenter
+    aarch64-dev:
+      ansible_host: aarch64-002.sys.eng.rdu2.dc.redhat.com
+      ansible_user: root
+      ansible_port: 22
+      # Host-specific variables (optional)
+      vm_default_vcpus: 4
+      vm_default_memory_mb: 4096
+      # Define multiple VMs for this host
+      vms:
+        - name: dev-vm-001
+          memory: 4096
+          vcpus: 4
+          disk_size: 50
+          autostart: true
+        - name: dev-vm-002
+          memory: 4096
+          vcpus: 4
+          disk_size: 50
+          autostart: true
+        - name: test-vm-001
+          memory: 2048
+          vcpus: 2
+          disk_size: 30
+          autostart: false
+
+    # Example: x86_64 production host in RDU datacenter
+    x86-prod:
+      ansible_host: x86-prod-001.sys.eng.rdu2.dc.redhat.com
+      ansible_user: root
+      ansible_port: 22
+      vm_default_vcpus: 8
+      vm_default_memory_mb: 8192
+      # Production VMs
+      vms:
+        - name: prod-app-server
+          memory: 8192
+          vcpus: 8
+          disk_size: 100
+          autostart: true
+        - name: prod-db-server
+          memory: 16384
+          vcpus: 8
+          disk_size: 200
+          autostart: true
+        - name: prod-cache-server
+          memory: 4096
+          vcpus: 4
+          disk_size: 50
+          autostart: true
+
+    # Example: Additional host with custom SSH key
+    # aarch64-backup:
+    #   ansible_host: aarch64-backup.example.com
+    #   ansible_user: libvirt_admin
+    #   ansible_port: 22
+    #   ansible_private_key_file: /path/to/custom/key
+    #   vms:
+    #     - name: backup-vm-001
+    #       memory: 2048
+    #       vcpus: 2
+    #       disk_size: 100
+    #       autostart: true
+
+  vars:
+    # Common settings for all hosts
+    ansible_connection: ssh
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_python_interpreter: /usr/bin/python3
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

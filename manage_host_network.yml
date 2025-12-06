@@ -1,0 +1,226 @@
+---
+# Manage libvirt virtual networks
+# This playbook creates, updates, or destroys virtual networks on libvirt hosts
+#
+# Supported network types:
+#   - bridge: Bridged network (direct connection to physical network)
+#   - nat: NAT network (isolated network with outbound NAT)
+#   - isolated: Isolated network (no external connectivity, host-only)
+#
+# Usage:
+#   1. Create networks from host_vars:
+#      ansible-playbook -i inventory manage_host_network.yml
+#
+#   2. Create networks for specific host:
+#      ansible-playbook -i inventory manage_host_network.yml -l hostname
+#
+#   3. Only create networks (don't start):
+#      ansible-playbook -i inventory manage_host_network.yml --tags create
+#
+#   4. Destroy specific network:
+#      ansible-playbook -i inventory manage_host_network.yml -e "network_name=mynetwork" --tags destroy
+#
+#   5. List networks:
+#      ansible-playbook -i inventory manage_host_network.yml --tags list
+#
+
+- name: Manage libvirt networks
+  hosts: libvirt_hosts
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Display network management mode
+      ansible.builtin.debug:
+        msg: |
+          Host: {{ inventory_hostname }}
+          Managing networks for libvirt host
+      tags:
+        - always
+
+    # ======================================
+    # List Networks
+    # ======================================
+    - name: List all networks
+      ansible.builtin.shell:
+        cmd: virsh net-list --all
+      register: network_list
+      changed_when: false
+      tags:
+        - list
+        - always
+
+    - name: Display current networks
+      ansible.builtin.debug:
+        msg: "{{ network_list.stdout_lines }}"
+      tags:
+        - list
+
+    # ======================================
+    # Destroy Network (if requested)
+    # ======================================
+    - name: Destroy specific network
+      when: network_name is defined
+      tags:
+        - destroy
+        - never
+      block:
+        - name: Check if network exists
+          ansible.builtin.shell:
+            cmd: virsh net-info "{{ network_name }}"
+          register: net_check
+          failed_when: false
+          changed_when: false
+
+        - name: Destroy active network
+          ansible.builtin.shell:
+            cmd: virsh net-destroy "{{ network_name }}"
+          when: net_check.rc == 0
+          register: net_destroy
+          failed_when: net_destroy.rc != 0 and 'not active' not in net_destroy.stderr
+
+        - name: Undefine network
+          ansible.builtin.shell:
+            cmd: virsh net-undefine "{{ network_name }}"
+          when: net_check.rc == 0
+          register: net_undefine
+          failed_when: net_undefine.rc != 0 and 'failed to get network' not in net_undefine.stderr
+
+        - name: Display destroy result
+          ansible.builtin.debug:
+            msg: "Network {{ network_name }} destroyed"
+          when: net_check.rc == 0
+
+    # ======================================
+    # Create Networks from host_vars
+    # ======================================
+    - name: Check if networks are defined
+      ansible.builtin.set_fact:
+        networks_to_create: "{{ networks | default([]) }}"
+      tags:
+        - create
+
+    - name: Display networks to create
+      ansible.builtin.debug:
+        msg: "Networks to create: {{ networks_to_create | map(attribute='name') | list }}"
+      when: networks_to_create | length > 0
+      tags:
+        - create
+
+    - name: No networks defined
+      ansible.builtin.debug:
+        msg: |
+          No networks defined for {{ inventory_hostname }}.
+
+          To create networks, define them in host_vars/{{ inventory_hostname }}.yml:
+
+          networks:
+            - name: storage-network
+              type: nat
+              bridge: virbr1
+              ip: 192.168.100.1
+              netmask: 255.255.255.0
+              dhcp_start: 192.168.100.2
+              dhcp_end: 192.168.100.254
+      when: networks_to_create | length == 0
+      tags:
+        - create
+
+    - name: Create network definitions
+      when: networks_to_create | length > 0
+      tags:
+        - create
+      block:
+        - name: Generate network XML for NAT networks
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/network_nat.xml.j2"
+            dest: "/tmp/{{ item.name }}_network.xml"
+          loop: "{{ networks_to_create }}"
+          when: item.type == 'nat'
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Generate network XML for isolated networks
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/network_isolated.xml.j2"
+            dest: "/tmp/{{ item.name }}_network.xml"
+          loop: "{{ networks_to_create }}"
+          when: item.type == 'isolated'
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Generate network XML for bridge networks
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/network_bridge.xml.j2"
+            dest: "/tmp/{{ item.name }}_network.xml"
+          loop: "{{ networks_to_create }}"
+          when: item.type == 'bridge'
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Check if network already exists
+          ansible.builtin.shell:
+            cmd: virsh net-info "{{ item.name }}"
+          loop: "{{ networks_to_create }}"
+          register: existing_networks
+          failed_when: false
+          changed_when: false
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Define networks
+          ansible.builtin.shell:
+            cmd: virsh net-define "/tmp/{{ item.item.name }}_network.xml"
+          loop: "{{ existing_networks.results }}"
+          when: item.rc != 0
+          register: net_define
+          loop_control:
+            label: "{{ item.item.name }}"
+
+        - name: Start networks
+          ansible.builtin.shell:
+            cmd: virsh net-start "{{ item.name }}"
+          loop: "{{ networks_to_create }}"
+          register: net_start
+          failed_when: net_start.rc != 0 and 'already active' not in net_start.stderr
+          loop_control:
+            label: "{{ item.name }}"
+          tags:
+            - start
+
+        - name: Set networks to autostart
+          ansible.builtin.shell:
+            cmd: virsh net-autostart "{{ item.name }}"
+          loop: "{{ networks_to_create }}"
+          when: item.autostart | default(true)
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Clean up temporary XML files
+          ansible.builtin.file:
+            path: "/tmp/{{ item.name }}_network.xml"
+            state: absent
+          loop: "{{ networks_to_create }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+    # ======================================
+    # Display Summary
+    # ======================================
+    - name: Get final network list
+      ansible.builtin.shell:
+        cmd: virsh net-list --all
+      register: final_networks
+      changed_when: false
+      tags:
+        - always
+
+    - name: Display network summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          NETWORK SUMMARY: {{ inventory_hostname }}
+          ========================================
+          {{ final_networks.stdout }}
+          ========================================
+      tags:
+        - always

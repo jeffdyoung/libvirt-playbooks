@@ -1,0 +1,91 @@
+<domain type='kvm'>
+  <name>{{ vm_name }}</name>
+  <memory unit='MiB'>{{ vm_memory_mb }}</memory>
+  <currentMemory unit='MiB'>{{ vm_memory_mb }}</currentMemory>
+  <vcpu placement='static'>{{ vm_vcpus }}</vcpu>
+  <os>
+{% if ansible_architecture == 'aarch64' %}
+    <type arch='aarch64' machine='virt'>hvm</type>
+    <loader readonly='yes' type='pflash'>/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw</loader>
+    <nvram>/var/lib/libvirt/qemu/nvram/{{ vm_name }}_VARS.fd</nvram>
+{% else %}
+    <type arch='x86_64' machine='pc'>hvm</type>
+{% endif %}
+{% if vm_iso is defined and vm_iso | length > 0 %}
+    <boot dev='cdrom'/>
+    <boot dev='hd'/>
+{% else %}
+    <boot dev='hd'/>
+{% endif %}
+  </os>
+  <features>
+    <acpi/>
+{% if ansible_architecture != 'aarch64' %}
+    <apic/>
+    <vmport state='off'/>
+{% endif %}
+  </features>
+  <cpu mode='host-passthrough'/>
+  <clock offset='utc'>
+    <timer name='rtc' tickpolicy='catchup'/>
+    <timer name='pit' tickpolicy='delay'/>
+    <timer name='hpet' present='no'/>
+  </clock>
+  <pm>
+    <suspend-to-mem supported='yes'/>
+    <suspend-to-disk supported='yes'/>
+  </pm>
+  <devices>
+{% if ansible_architecture == 'aarch64' %}
+    <emulator>/usr/bin/qemu-system-aarch64</emulator>
+{% else %}
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+{% endif %}
+{% if vm_volumes_list is defined and vm_volumes_list | length > 0 %}
+{% for volume in vm_volumes_list %}
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='{{ volume.format | default("qcow2") }}' discard='unmap'/>
+      <source file='{{ volume.path if volume.path is defined else (libvirt_storage_path ~ "/" ~ vm_name ~ "-" ~ volume.name) }}'/>
+      <target dev='{{ volume.device | default("vd" ~ "abcdefghijklmnopqrstuvwxyz"[loop.index0]) }}' bus='virtio'/>
+    </disk>
+{% endfor %}
+{% else %}
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' discard='unmap'/>
+      <source file='{{ vm_disk_path }}'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+{% endif %}
+{% if vm_iso is defined and vm_iso | length > 0 %}
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='{{ vm_iso if vm_iso is abs else (libvirt_storage_path ~ "/" ~ vm_iso) }}'/>
+      <target dev='sda' bus='sata'/>
+      <readonly/>
+    </disk>
+{% endif %}
+{% if vm_networks is defined and vm_networks | length > 0 %}
+{% for network in vm_networks %}
+    <interface type='network'>
+      <mac address='{{ network.mac | default("52:54:00:%02x:%02x:%02x" | format(range(0, 255) | random, range(0, 255) | random, range(0, 255) | random)) }}'/>
+      <source network='{{ network.name | default("default") }}'/>
+      <model type='virtio'/>
+    </interface>
+{% endfor %}
+{% else %}
+    <interface type='network'>
+      <mac address='{{ vm_mac | default("52:54:00:%02x:%02x:%02x" | format(range(0, 255) | random, range(0, 255) | random, range(0, 255) | random)) }}'/>
+      <source network='default'/>
+      <model type='virtio'/>
+    </interface>
+{% endif %}
+    <console type='pty'>
+      <target type='virtio' port='0'/>
+    </console>
+    <graphics type='spice' autoport='yes'/>
+    <memballoon model='virtio'/>
+    <rng model='virtio'>
+      <backend model='builtin'/>
+    </rng>
+  </devices>
+</domain>

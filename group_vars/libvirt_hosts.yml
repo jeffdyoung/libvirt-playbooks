@@ -1,0 +1,26 @@
+---
+# Libvirt configuration
+libvirt_enabled: true
+
+# Default storage path: use the user's home directory
+# Note: Proper permissions and SELinux contexts will be set automatically
+# We construct this based on ansible_user to avoid HOME being /root when using become
+# All libvirt data (images, ISOs, cloud-images) stored in a single location by default
+libvirt_storage_path: "/home/{{ ansible_user }}/libvirt"
+libvirt_network_name: default
+
+# VM defaults
+vm_memory_mb: 2048
+vm_vcpus: 2
+vm_disk_size_gb: 20
+vm_os_variant: fedora42
+
+# Network settings
+vm_network_bridge: virbr0
+vm_dns_servers:
+  - 8.8.8.8
+  - 8.8.4.4
+
+# Default settings (can be overridden per-host in inventory)
+ansible_become: true
+ansible_become_method: sudo

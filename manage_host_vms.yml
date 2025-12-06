@@ -1,0 +1,150 @@
+---
+# Unified VM Management Playbook
+# This playbook consolidates VM creation and configuration
+#
+# Usage modes:
+#   1. Create single VM from command line:
+#      ansible-playbook -i inventory manage_host_vms.yml -e "vm_name=myvm"
+#
+#   2. Create multiple VMs from inventory (YAML format):
+#      ansible-playbook -i inventory.yml manage_host_vms.yml
+#
+#   3. Create VMs from host_vars:
+#      ansible-playbook -i inventory manage_host_vms.yml -l hostname
+#
+#   4. Skip configuration:
+#      ansible-playbook -i inventory manage_host_vms.yml --skip-tags configure
+#
+#   5. Only configure existing VMs:
+#      ansible-playbook -i inventory manage_host_vms.yml --tags configure
+#
+
+- name: Create and configure VMs
+  hosts: libvirt_hosts
+  become: false
+  gather_facts: true
+  tasks:
+    # Normalize VM input: convert single VM to list format
+    - name: Build unified VM list
+      ansible.builtin.set_fact:
+        vms_to_create: >-
+          {{
+            [{'name': vm_name,
+              'memory': vm_memory_mb | default(2048),
+              'vcpus': vm_vcpus | default(2),
+              'disk_size': vm_disk_size_gb | default(20),
+              'autostart': vm_autostart | default(false)}]
+            if vm_name is defined
+            else (vms | default([]))
+          }}
+      tags:
+        - always
+
+    - name: Display execution mode
+      ansible.builtin.debug:
+        msg: |
+          Host: {{ inventory_hostname }}
+          Mode: {{ 'Single VM (command-line)' if vm_name is defined else 'Multiple VMs (inventory)' }}
+          VMs to process: {{ vms_to_create | map(attribute='name') | list }}
+          Total count: {{ vms_to_create | length }}
+      tags:
+        - always
+
+    # Handle case where no VMs defined
+    - name: Check if VMs are defined
+      when: vms_to_create | length == 0
+      block:
+        - name: No VMs to create
+          ansible.builtin.debug:
+            msg: |
+              No VMs defined for host {{ inventory_hostname }}.
+
+              To create VMs, use one of these methods:
+              1. Command-line: -e "vm_name=myvm"
+              2. Inventory: Define 'vms' list in inventory.yml
+              3. Host vars: Create host_vars/{{ inventory_hostname }}.yml with 'vms' list
+          tags:
+            - always
+
+        - name: Skip host with no VM definitions
+          ansible.builtin.meta: end_host
+          tags:
+            - always
+
+    # Unified VM creation - handles both single and multiple VMs
+    - name: Create VMs
+      ansible.builtin.include_role:
+        name: vm-create
+      vars:
+        vm_name: "{{ item.name }}"
+        vm_memory_mb: "{{ item.memory | default(2048) }}"
+        vm_vcpus: "{{ item.vcpus | default(2) }}"
+        vm_disk_size_gb: "{{ item.disk_size | default(20) }}"
+        vm_autostart: "{{ item.autostart | default(false) }}"
+        vm_networks: "{{ item.networks | default([]) }}"
+      loop: "{{ vms_to_create }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: vm_creation_results
+      tags:
+        - create
+
+    - name: Add created VMs to dynamic group for configuration
+      ansible.builtin.add_host:
+        name: "{{ item.item.name }}"
+        groups: vms_to_configure
+        ansible_host: "{{ item.vm_ip_result.stdout | default('') }}"
+      loop: "{{ vm_creation_results.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - item.vm_ip_result is defined
+        - item.vm_ip_result.stdout is defined
+        - item.vm_ip_result.stdout | length > 0
+      tags:
+        - create
+
+    - name: Display creation summary
+      ansible.builtin.debug:
+        msg: |
+          VM creation completed for {{ inventory_hostname }}
+          Total VMs created: {{ vms_to_create | length }}
+          VMs: {{ vms_to_create | map(attribute='name') | list | join(', ') }}
+      tags:
+        - create
+
+# Optional: Configure created VMs
+# This section can be skipped with --skip-tags configure
+- name: Configure created VMs
+  hosts: vms_to_configure
+  gather_facts: true
+  tasks:
+    - name: Display configuration target
+      ansible.builtin.debug:
+        msg: "Configuring VM: {{ inventory_hostname }} at {{ ansible_host }}"
+      tags:
+        - configure
+
+    - name: Wait for VM to be accessible via SSH
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        timeout: 300
+        state: started
+      delegate_to: localhost
+      when: ansible_host is defined and ansible_host | length > 0
+      tags:
+        - configure
+
+    - name: Configure VM
+      ansible.builtin.include_role:
+        name: vm-configure
+      when: ansible_host is defined and ansible_host | length > 0
+      tags:
+        - configure
+
+    - name: Display configuration complete
+      ansible.builtin.debug:
+        msg: "VM {{ inventory_hostname }} configured successfully"
+      tags:
+        - configure

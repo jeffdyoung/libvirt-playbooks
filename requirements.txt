@@ -1,0 +1,10 @@
+# Requirements for libvirt-playbooks
+
+ansible>=2.12.0
+ansible-core>=2.12.0
+jinja2>=3.0.0
+pyyaml>=5.4.0
+
+# Collections (install via ansible-galaxy instead)
+# community.libvirt
+# ansible.posix

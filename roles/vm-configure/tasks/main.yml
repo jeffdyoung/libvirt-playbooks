@@ -1,0 +1,77 @@
+---
+- name: Ensure VM configuration variables are defined
+  ansible.builtin.assert:
+    that:
+      - vm_ip is defined
+      - vm_ip | length > 0
+    fail_msg: "vm_ip must be defined for VM configuration"
+  tags:
+    - vm-configure
+
+- name: Wait for VM SSH connectivity
+  ansible.builtin.wait_for:
+    host: "{{ vm_ip }}"
+    port: 22
+    delay: 10
+    timeout: 300
+    connect_timeout: 5
+  tags:
+    - vm-configure
+    - ssh
+
+- name: Add VM to runtime inventory
+  ansible.builtin.add_host:
+    name: "{{ vm_name }}"
+    ansible_host: "{{ vm_ip }}"
+    ansible_user: "{{ vm_user | default('root') }}"
+    groups: vms_created
+  tags:
+    - vm-configure
+    - inventory
+
+- name: Configure VM hostname
+  ansible.builtin.hostname:
+    name: "{{ vm_hostname | default(vm_name) }}"
+  delegate_to: "{{ vm_name }}"
+  tags:
+    - vm-configure
+    - hostname
+
+- name: Update VM system packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+  delegate_to: "{{ vm_name }}"
+  retries: 3
+  delay: 10
+  tags:
+    - vm-configure
+    - packages
+
+- name: Install common tools
+  ansible.builtin.dnf:
+    name:
+      - curl
+      - wget
+      - vim
+      - git
+      - htop
+      - tmux
+      - openssh-clients
+      - python3-dnf
+    state: present
+  delegate_to: "{{ vm_name }}"
+  tags:
+    - vm-configure
+    - packages
+
+- name: Configure SSH key-based authentication
+  ansible.posix.authorized_key:
+    user: "{{ vm_user | default('root') }}"
+    state: present
+    key: "{{ lookup('file', lookup('env','HOME') + '/.ssh/id_rsa.pub') }}"
+  delegate_to: "{{ vm_name }}"
+  tags:
+    - vm-configure
+    - ssh
+  ignore_errors: true

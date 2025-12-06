@@ -1,0 +1,341 @@
+---
+# Manage libvirt storage pools, directories, and ISO images
+# This playbook can be used to create, configure, or update storage pools
+# and download ISO images for VM installation
+#
+# Usage:
+#   1. Setup default storage pool:
+#      ansible-playbook -i inventory manage_host_storage.yml
+#
+#   2. Setup storage for specific host:
+#      ansible-playbook -i inventory manage_host_storage.yml -l hostname
+#
+#   3. Only create directories:
+#      ansible-playbook -i inventory manage_host_storage.yml --tags directories
+#
+#   4. Only setup storage pool:
+#      ansible-playbook -i inventory manage_host_storage.yml --tags pool
+#
+#   5. Only download ISOs:
+#      ansible-playbook -i inventory manage_host_storage.yml --tags iso
+#
+#   6. Setup everything (storage + ISOs):
+#      ansible-playbook -i inventory manage_host_storage.yml
+#
+
+- name: Manage libvirt storage
+  hosts: libvirt_hosts
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Display storage configuration
+      ansible.builtin.debug:
+        msg: |
+          Host: {{ inventory_hostname }}
+          Default storage path: {{ libvirt_storage_path }}
+          Custom storage pools: {{ storage_pools | default([]) | length }}
+      tags:
+        - always
+
+    - name: Ensure parent directories allow traversal
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}"
+        state: directory
+        mode: '0711'
+      when: libvirt_storage_path is search('^/home/')
+      tags:
+        - directories
+        - permissions
+
+    - name: Create default libvirt storage directory
+      ansible.builtin.file:
+        path: "{{ libvirt_storage_path }}"
+        state: directory
+        mode: '0711'
+        owner: "{{ ansible_user if libvirt_storage_path is search('^/home/') else 'root' }}"
+      tags:
+        - directories
+
+    - name: Create custom storage pool directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: '0711'
+        owner: "{{ ansible_user if item.path is search('^/home/') else 'root' }}"
+      loop: "{{ storage_pools | default([]) }}"
+      when: storage_pools is defined and storage_pools | length > 0
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - directories
+        - custom
+
+    - name: Set SELinux context on default storage
+      ansible.builtin.shell:
+        cmd: |
+          semanage fcontext -a -t virt_image_t "{{ libvirt_storage_path }}(/.*)?" 2>/dev/null || true
+          restorecon -R "{{ libvirt_storage_path }}"
+      when: ansible_selinux.status == "enabled"
+      ignore_errors: true
+      tags:
+        - directories
+        - selinux
+
+    - name: Set SELinux context on custom storage pools
+      ansible.builtin.shell:
+        cmd: |
+          semanage fcontext -a -t virt_image_t "{{ item.path }}(/.*)?" 2>/dev/null || true
+          restorecon -R "{{ item.path }}"
+      loop: "{{ storage_pools | default([]) }}"
+      when:
+        - storage_pools is defined and storage_pools | length > 0
+        - ansible_selinux.status == "enabled"
+      ignore_errors: true
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - directories
+        - selinux
+        - custom
+
+    - name: Check if default storage pool exists
+      ansible.builtin.shell:
+        cmd: virsh pool-info default
+      register: pool_check
+      failed_when: false
+      changed_when: false
+      tags:
+        - pool
+
+    - name: Destroy existing default pool if path differs
+      block:
+        - name: Get current pool path
+          ansible.builtin.shell:
+            cmd: virsh pool-dumpxml default | grep '<path>' | sed 's/.*<path>\(.*\)<\/path>.*/\1/'
+          register: current_pool_path
+          changed_when: false
+
+        - name: Destroy and undefine old pool
+          ansible.builtin.shell:
+            cmd: |
+              virsh pool-destroy default 2>/dev/null || true
+              virsh pool-undefine default
+          when: current_pool_path.stdout != libvirt_storage_path
+      when: pool_check.rc == 0
+      tags:
+        - pool
+
+    - name: Define default libvirt storage pool
+      community.libvirt.virt_pool:
+        command: define
+        name: default
+        xml: |
+          <pool type='dir'>
+            <name>default</name>
+            <target>
+              <path>{{ libvirt_storage_path }}</path>
+              <permissions>
+                <mode>0711</mode>
+                <owner>{{ ansible_user_uid if libvirt_storage_path is search('^/home/') else '0' }}</owner>
+                <group>{{ ansible_user_gid if libvirt_storage_path is search('^/home/') else '0' }}</group>
+              </permissions>
+            </target>
+          </pool>
+        uri: qemu:///system
+      register: pool_result
+      failed_when: pool_result.failed and 'already exists' not in pool_result.msg
+      tags:
+        - pool
+
+    - name: Build storage pool
+      ansible.builtin.shell:
+        cmd: virsh pool-build default
+      register: pool_build
+      failed_when: pool_build.rc != 0 and 'already exists' not in pool_build.stderr
+      changed_when: pool_build.rc == 0
+      tags:
+        - pool
+
+    - name: Ensure storage pool is active
+      community.libvirt.virt_pool:
+        name: default
+        command: start
+        uri: qemu:///system
+      register: pool_start
+      failed_when: pool_start.failed and 'is already active' not in pool_start.msg
+      tags:
+        - pool
+
+    - name: Ensure storage pool is autostart
+      community.libvirt.virt_pool:
+        name: default
+        autostart: yes
+        uri: qemu:///system
+      tags:
+        - pool
+
+    - name: Refresh storage pool
+      ansible.builtin.shell:
+        cmd: virsh pool-refresh default
+      register: pool_refresh
+      changed_when: false
+      tags:
+        - pool
+
+    - name: Display storage pool information
+      ansible.builtin.shell:
+        cmd: virsh pool-info default
+      register: pool_info
+      changed_when: false
+      tags:
+        - pool
+        - verify
+
+    - name: Show storage pool details
+      ansible.builtin.debug:
+        msg: "{{ pool_info.stdout_lines }}"
+      tags:
+        - pool
+        - verify
+
+    - name: Define custom libvirt storage pools
+      community.libvirt.virt_pool:
+        command: define
+        name: "{{ item.name }}"
+        xml: |
+          <pool type='dir'>
+            <name>{{ item.name }}</name>
+            <target>
+              <path>{{ item.path }}</path>
+              <permissions>
+                <mode>0711</mode>
+                <owner>{{ ansible_user_uid if item.path is search('^/home/') else '0' }}</owner>
+                <group>{{ ansible_user_gid if item.path is search('^/home/') else '0' }}</group>
+              </permissions>
+            </target>
+          </pool>
+        uri: qemu:///system
+      loop: "{{ storage_pools | default([]) }}"
+      when: storage_pools is defined and storage_pools | length > 0
+      register: custom_pool_result
+      failed_when: custom_pool_result.failed and 'already exists' not in custom_pool_result.msg
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - pool
+        - custom
+
+    - name: Build custom storage pools
+      ansible.builtin.shell:
+        cmd: virsh pool-build {{ item.name }}
+      loop: "{{ storage_pools | default([]) }}"
+      when: storage_pools is defined and storage_pools | length > 0
+      register: custom_pool_build
+      failed_when: custom_pool_build.rc != 0 and 'already exists' not in custom_pool_build.stderr
+      changed_when: custom_pool_build.rc == 0
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - pool
+        - custom
+
+    - name: Ensure custom storage pools are active
+      community.libvirt.virt_pool:
+        name: "{{ item.name }}"
+        command: start
+        uri: qemu:///system
+      loop: "{{ storage_pools | default([]) }}"
+      when: storage_pools is defined and storage_pools | length > 0
+      register: custom_pool_start
+      failed_when: custom_pool_start.failed and 'is already active' not in custom_pool_start.msg
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - pool
+        - custom
+
+    - name: Ensure custom storage pools autostart
+      community.libvirt.virt_pool:
+        name: "{{ item.name }}"
+        autostart: yes
+        uri: qemu:///system
+      loop: "{{ storage_pools | default([]) }}"
+      when: storage_pools is defined and storage_pools | length > 0
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - pool
+        - custom
+
+    - name: Refresh custom storage pools
+      ansible.builtin.shell:
+        cmd: virsh pool-refresh {{ item.name }}
+      loop: "{{ storage_pools | default([]) }}"
+      when: storage_pools is defined and storage_pools | length > 0
+      register: custom_pool_refresh
+      changed_when: false
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - pool
+        - custom
+
+    - name: Download ISO images
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ libvirt_storage_path }}/{{ item.alias }}"
+        mode: '0644'
+        checksum: "{{ item.checksum | default(omit) }}"
+        timeout: 3600
+      loop: "{{ iso_images | default([]) }}"
+      when: iso_images is defined and iso_images | length > 0
+      loop_control:
+        label: "{{ item.alias }}"
+      tags:
+        - iso
+        - download
+
+    - name: Set ISO ownership
+      ansible.builtin.file:
+        path: "{{ libvirt_storage_path }}/{{ item.alias }}"
+        owner: "{{ ansible_user if libvirt_storage_path is search('^/home/') else 'root' }}"
+        group: "{{ ansible_user if libvirt_storage_path is search('^/home/') else 'root' }}"
+        mode: '0644'
+      loop: "{{ iso_images | default([]) }}"
+      when: iso_images is defined and iso_images | length > 0
+      loop_control:
+        label: "{{ item.alias }}"
+      tags:
+        - iso
+        - permissions
+
+    - name: Set SELinux context on ISO files
+      ansible.builtin.shell:
+        cmd: restorecon "{{ libvirt_storage_path }}/{{ item.alias }}"
+      loop: "{{ iso_images | default([]) }}"
+      when:
+        - iso_images is defined and iso_images | length > 0
+        - ansible_selinux.status == "enabled"
+      ignore_errors: true
+      loop_control:
+        label: "{{ item.alias }}"
+      tags:
+        - iso
+        - selinux
+
+    - name: List downloaded ISOs
+      ansible.builtin.find:
+        paths: "{{ libvirt_storage_path }}"
+        patterns: "*.iso"
+      register: iso_files
+      tags:
+        - iso
+        - verify
+
+    - name: Display downloaded ISOs
+      ansible.builtin.debug:
+        msg: "{{ iso_files.files | map(attribute='path') | list }}"
+      when: iso_files.matched > 0
+      tags:
+        - iso
+        - verify

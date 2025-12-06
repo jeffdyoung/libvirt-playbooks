@@ -1,0 +1,90 @@
+# Example: VMs with ISO images mounted as CDROM
+# ISOs can be used for OS installation or as additional data sources
+
+# Example 1: Basic VM with ISO for installation
+vms:
+  - name: fedora-install
+    memory: 4096
+    vcpus: 2
+    disk_size: 50
+    iso: "fedora43x86.iso"  # ISO filename from libvirt_storage_path
+
+# Example 2: VM with full ISO path
+vms:
+  - name: custom-install
+    memory: 4096
+    vcpus: 2
+    disk_size: 40
+    iso: "/home/jeyoung/libvirt/ubuntu-22.04-server.iso"  # Full path
+
+# Example 3: Multiple VMs with different ISOs
+vms:
+  - name: fedora-server
+    memory: 8192
+    vcpus: 4
+    disk_size: 100
+    iso: "fedora43x86.iso"
+    networks:
+      - name: default
+        mac: "52:54:00:10:00:01"
+
+  - name: centos-server
+    memory: 8192
+    vcpus: 4
+    disk_size: 100
+    iso: "centos-stream-9.iso"
+    networks:
+      - name: default
+        mac: "52:54:00:10:00:02"
+
+# Example 4: VM with ISO, multiple volumes, and networks
+vms:
+  - name: database-install
+    memory: 16384
+    vcpus: 8
+    disk_size: 50
+    iso: "fedora43x86.iso"
+    autostart: false  # Don't autostart during installation
+    networks:
+      - name: default
+        mac: "52:54:00:10:00:10"
+      - name: storage-network
+        mac: "52:54:00:20:00:10"
+    volumes:
+      - name: data01.qcow2
+        size: 200
+      - name: data02.qcow2
+        size: 200
+
+# ISO parameter explained:
+# - iso: ISO filename (from libvirt_storage_path) or full path
+#   - Filename only: "fedora43x86.iso" -> looked up in libvirt_storage_path
+#   - Full path: "/home/user/libvirt/custom.iso" -> used as-is
+#   - The ISO is mounted as a CDROM device (sda on SATA bus)
+#   - Boot order when ISO present: CDROM first, then hard disk
+#   - ISO is read-only
+
+# Notes:
+# 1. When vm_iso is specified:
+#    - Boot order: CDROM -> Hard Disk
+#    - ISO mounted as /dev/sda (SATA)
+#    - Regular disks still use virtio (vda, vdb, etc.)
+# 2. ISOs should be downloaded first using manage_host_storage.yml --tags iso
+# 3. After OS installation, you may want to:
+#    - Remove the iso parameter from host_vars
+#    - Redefine the VM to unmount the ISO
+#    - Or manually eject via virt-manager
+# 4. Set autostart: false during installation to prevent auto-boot before setup
+
+# Workflow for installing from ISO:
+# 1. Download ISO:
+#    ansible-playbook -i inventory manage_host_storage.yml --tags iso
+#
+# 2. Create VM with ISO mounted:
+#    ansible-playbook -i inventory manage_host_vms.yml --skip-tags configure
+#
+# 3. Install OS manually via virt-manager or console
+#
+# 4. After installation, remove iso parameter and redefine:
+#    - Edit host_vars file, remove 'iso:' line
+#    - Re-run: ansible-playbook -i inventory manage_host_vms.yml --tags vm-create

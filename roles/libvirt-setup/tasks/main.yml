@@ -1,0 +1,164 @@
+---
+- name: Update system packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+  become: true
+  tags:
+    - setup
+    - packages
+
+- name: Install libvirt packages
+  ansible.builtin.dnf:
+    name:
+      - libvirt
+      - libvirt-daemon
+      - libvirt-daemon-kvm
+      - qemu
+      - qemu-kvm
+      - qemu-img
+      - virt-manager
+      - virt-install
+      - virt-viewer
+      - virt-what
+      - libosinfo
+      - python3-libvirt
+      - cloud-utils
+      - guestfs-tools
+    state: present
+  become: true
+  tags:
+    - setup
+    - packages
+
+- name: Enable libvirt service
+  ansible.builtin.systemd:
+    name: libvirtd
+    enabled: true
+    state: started
+  become: true
+  tags:
+    - setup
+    - services
+
+- name: Ensure parent directories allow traversal
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}"
+    state: directory
+    mode: '0711'
+  become: true
+  when: libvirt_storage_path is search('^/home/')
+  tags:
+    - setup
+    - directories
+
+- name: Create default libvirt storage directory
+  ansible.builtin.file:
+    path: "{{ libvirt_storage_path }}"
+    state: directory
+    mode: '0711'
+    owner: "{{ ansible_user if libvirt_storage_path is search('^/home/') else 'root' }}"
+  become: true
+  tags:
+    - setup
+    - directories
+
+- name: Set SELinux context on default storage
+  ansible.builtin.shell:
+    cmd: |
+      semanage fcontext -a -t virt_image_t "{{ libvirt_storage_path }}(/.*)?" 2>/dev/null || true
+      restorecon -R "{{ libvirt_storage_path }}"
+  become: true
+  when: ansible_selinux.status == "enabled"
+  ignore_errors: true
+  tags:
+    - setup
+    - directories
+    - selinux
+
+- name: Ensure user is in libvirt groups
+  ansible.builtin.user:
+    name: "{{ ansible_user_id }}"
+    groups: libvirt,qemu,kvm
+    append: yes
+  become: true
+  register: user_updated
+  tags:
+    - setup
+    - permissions
+
+- name: Reset ssh connection to reload groups
+  ansible.builtin.meta: reset_connection
+  when: user_updated.changed
+  tags:
+    - setup
+
+- name: Define default libvirt storage pool
+  community.libvirt.virt_pool:
+    command: define
+    name: default
+    xml: "{{ lookup('template', 'storage_pool.xml.j2') }}"
+    uri: qemu:///system
+  register: pool_result
+  failed_when: pool_result.failed and 'already exists' not in pool_result.msg
+  tags:
+    - setup
+    - storage
+
+- name: Ensure storage pool is active
+  community.libvirt.virt_pool:
+    name: default
+    command: start
+    uri: qemu:///system
+  register: pool_start
+  failed_when: pool_start.failed and 'is already active' not in pool_start.msg
+  tags:
+    - setup
+    - storage
+
+- name: Ensure storage pool is autostart
+  community.libvirt.virt_pool:
+    name: default
+    autostart: yes
+    uri: qemu:///system
+  tags:
+    - setup
+    - storage
+
+- name: Refresh storage pool
+  ansible.builtin.shell:
+    cmd: virsh pool-refresh default
+  register: pool_refresh
+  changed_when: false
+  tags:
+    - setup
+    - storage
+
+- name: Verify nested virtualization is enabled (for Intel)
+  ansible.builtin.shell:
+    cmd: cat /sys/module/kvm_intel/parameters/nested
+  register: kvm_nested_intel
+  failed_when: false
+  changed_when: false
+  tags:
+    - setup
+    - verify
+
+- name: Verify nested virtualization is enabled (for AMD)
+  ansible.builtin.shell:
+    cmd: cat /sys/module/kvm_amd/parameters/nested
+  register: kvm_nested_amd
+  failed_when: false
+  changed_when: false
+  tags:
+    - setup
+    - verify
+
+- name: Display nested virtualization status
+  ansible.builtin.debug:
+    msg: |
+      Intel nested virtualization: {{ kvm_nested_intel.stdout | default('N/A') }}
+      AMD nested virtualization: {{ kvm_nested_amd.stdout | default('N/A') }}
+  tags:
+    - setup
+    - verify

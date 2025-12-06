@@ -1,0 +1,257 @@
+---
+# Reset libvirt host by removing all VMs, networks, and storage
+# WARNING: This will destroy all VMs and their data!
+#
+# Usage:
+#   1. Reset specific host (recommended - always specify host):
+#      ansible-playbook -i inventory reset_host.yml -l hostname
+#
+#   2. Reset all hosts (DANGEROUS - use with caution):
+#      ansible-playbook -i inventory reset_host.yml --extra-vars "confirm_reset_all=yes"
+#
+#   3. Only remove VMs:
+#      ansible-playbook -i inventory reset_host.yml -l hostname --tags vms
+#
+#   4. Only remove networks:
+#      ansible-playbook -i inventory reset_host.yml -l hostname --tags networks
+#
+#   5. Only remove storage:
+#      ansible-playbook -i inventory reset_host.yml -l hostname --tags storage
+#
+
+- name: Reset libvirt host
+  hosts: libvirt_hosts
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Safety check - require host limit or confirmation
+      ansible.builtin.assert:
+        that:
+          - ansible_limit is defined or confirm_reset_all is defined
+        fail_msg: |
+          SAFETY CHECK FAILED!
+
+          You must either:
+          1. Limit to specific host(s): -l hostname
+          2. Confirm reset all hosts: --extra-vars "confirm_reset_all=yes"
+
+          This prevents accidentally resetting all hosts.
+      tags:
+        - always
+
+    - name: Display warning
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          WARNING: DESTRUCTIVE OPERATION
+          ========================================
+          This will remove ALL VMs, networks, and storage from:
+          Host: {{ inventory_hostname }}
+
+          VMs will be destroyed and their data will be lost!
+
+          Continuing in 5 seconds...
+          Press Ctrl+C now to abort!
+          ========================================
+      tags:
+        - always
+
+    - name: Pause for confirmation
+      ansible.builtin.pause:
+        seconds: 5
+      tags:
+        - always
+
+    # ======================================
+    # VMs
+    # ======================================
+    - name: Get list of all VMs
+      ansible.builtin.shell:
+        cmd: virsh list --all --name
+      register: vm_list
+      changed_when: false
+      tags:
+        - vms
+
+    - name: Display VMs to be removed
+      ansible.builtin.debug:
+        msg: "VMs to remove: {{ vm_list.stdout_lines | select() | list }}"
+      when: vm_list.stdout_lines | select() | list | length > 0
+      tags:
+        - vms
+
+    - name: Destroy running VMs
+      ansible.builtin.shell:
+        cmd: virsh destroy "{{ item }}"
+      loop: "{{ vm_list.stdout_lines | select() | list }}"
+      when: vm_list.stdout_lines | select() | list | length > 0
+      register: vm_destroy
+      failed_when: vm_destroy.rc != 0 and 'domain is not running' not in vm_destroy.stderr
+      tags:
+        - vms
+
+    - name: Undefine VMs (remove configuration and NVRAM)
+      ansible.builtin.shell:
+        cmd: virsh undefine "{{ item }}" --nvram --remove-all-storage
+      loop: "{{ vm_list.stdout_lines | select() | list }}"
+      when: vm_list.stdout_lines | select() | list | length > 0
+      register: vm_undefine
+      failed_when: vm_undefine.rc != 0 and 'failed to get domain' not in vm_undefine.stderr
+      tags:
+        - vms
+
+    # ======================================
+    # Networks (excluding default)
+    # ======================================
+    - name: Get list of all networks
+      ansible.builtin.shell:
+        cmd: virsh net-list --all --name
+      register: network_list
+      changed_when: false
+      tags:
+        - networks
+
+    - name: Filter out default network
+      ansible.builtin.set_fact:
+        custom_networks: "{{ network_list.stdout_lines | select() | reject('equalto', 'default') | list }}"
+      tags:
+        - networks
+
+    - name: Display networks to be removed
+      ansible.builtin.debug:
+        msg: "Networks to remove: {{ custom_networks }}"
+      when: custom_networks | length > 0
+      tags:
+        - networks
+
+    - name: Destroy active networks
+      ansible.builtin.shell:
+        cmd: virsh net-destroy "{{ item }}"
+      loop: "{{ custom_networks }}"
+      when: custom_networks | length > 0
+      register: net_destroy
+      failed_when: net_destroy.rc != 0 and 'network is not active' not in net_destroy.stderr
+      tags:
+        - networks
+
+    - name: Undefine networks
+      ansible.builtin.shell:
+        cmd: virsh net-undefine "{{ item }}"
+      loop: "{{ custom_networks }}"
+      when: custom_networks | length > 0
+      register: net_undefine
+      failed_when: net_undefine.rc != 0 and 'failed to get network' not in net_undefine.stderr
+      tags:
+        - networks
+
+    # ======================================
+    # Storage Pools (excluding default)
+    # ======================================
+    - name: Get list of all storage pools
+      ansible.builtin.shell:
+        cmd: virsh pool-list --all --name
+      register: pool_list
+      changed_when: false
+      tags:
+        - storage
+
+    - name: Display all storage pools
+      ansible.builtin.debug:
+        msg: "Storage pools found: {{ pool_list.stdout_lines | select() | list }}"
+      tags:
+        - storage
+
+    - name: Destroy active storage pools
+      ansible.builtin.shell:
+        cmd: virsh pool-destroy "{{ item }}"
+      loop: "{{ pool_list.stdout_lines | select() | list }}"
+      when: pool_list.stdout_lines | select() | list | length > 0
+      register: pool_destroy
+      failed_when: pool_destroy.rc != 0 and 'pool is not active' not in pool_destroy.stderr
+      tags:
+        - storage
+
+    - name: Undefine storage pools
+      ansible.builtin.shell:
+        cmd: virsh pool-undefine "{{ item }}"
+      loop: "{{ pool_list.stdout_lines | select() | list }}"
+      when: pool_list.stdout_lines | select() | list | length > 0
+      register: pool_undefine
+      failed_when: pool_undefine.rc != 0 and 'failed to get pool' not in pool_undefine.stderr
+      tags:
+        - storage
+
+    # ======================================
+    # Cleanup Storage Directories
+    # ======================================
+    - name: Remove VM storage directory
+      ansible.builtin.file:
+        path: "{{ libvirt_storage_path }}"
+        state: absent
+      when: libvirt_storage_path is defined
+      tags:
+        - storage
+        - cleanup
+
+    - name: Remove NVRAM files
+      ansible.builtin.shell:
+        cmd: rm -rf /var/lib/libvirt/qemu/nvram/*
+      tags:
+        - vms
+        - cleanup
+
+    - name: Remove libvirt temporary files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/*_definition.xml
+      tags:
+        - cleanup
+
+    # ======================================
+    # Summary
+    # ======================================
+    - name: Get final state - VMs
+      ansible.builtin.shell:
+        cmd: virsh list --all --name
+      register: final_vms
+      changed_when: false
+      tags:
+        - verify
+
+    - name: Get final state - Networks
+      ansible.builtin.shell:
+        cmd: virsh net-list --all --name
+      register: final_networks
+      changed_when: false
+      tags:
+        - verify
+
+    - name: Get final state - Storage Pools
+      ansible.builtin.shell:
+        cmd: virsh pool-list --all --name
+      register: final_pools
+      changed_when: false
+      tags:
+        - verify
+
+    - name: Display reset summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          RESET COMPLETE: {{ inventory_hostname }}
+          ========================================
+
+          VMs removed: {{ (vm_list.stdout_lines | select() | list) | length }}
+          Networks removed: {{ custom_networks | default([]) | length }}
+          Storage pools removed: {{ (pool_list.stdout_lines | select() | list) | length }}
+
+          Remaining VMs: {{ (final_vms.stdout_lines | select() | list) | length }}
+          Remaining networks: {{ (final_networks.stdout_lines | select() | list) | length }}
+          Remaining pools: {{ (final_pools.stdout_lines | select() | list) | length }}
+
+          Storage directory removed: {{ libvirt_storage_path | default('N/A') }}
+          ========================================
+      tags:
+        - always

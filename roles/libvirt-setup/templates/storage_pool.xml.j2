@@ -1,0 +1,16 @@
+<pool type='dir'>
+  <name>default</name>
+  <target>
+    <path>{{ libvirt_storage_path }}</path>
+    <permissions>
+      <mode>0711</mode>
+{% if libvirt_storage_path is search('^/home/') %}
+      <owner>{{ ansible_user_uid }}</owner>
+      <group>{{ ansible_user_gid }}</group>
+{% else %}
+      <owner>0</owner>
+      <group>0</group>
+{% endif %}
+    </permissions>
+  </target>
+</pool>

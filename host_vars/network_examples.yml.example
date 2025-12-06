@@ -1,0 +1,83 @@
+---
+# Example network configurations for libvirt hosts
+# Copy this file to host_vars/<your-hostname>.yml and customize
+
+# Network definitions
+networks:
+  # NAT Network Example
+  # Provides outbound connectivity via NAT, isolated from physical network
+  - name: storage-network
+    type: nat
+    bridge: virbr1
+    ip: 192.168.100.1
+    netmask: 255.255.255.0
+    dhcp_start: 192.168.100.10
+    dhcp_end: 192.168.100.254
+    autostart: true
+    # Optional: Static DHCP assignments
+    dhcp_hosts:
+      - mac: "52:54:00:aa:bb:01"
+        name: storage-node-1
+        ip: 192.168.100.11
+      - mac: "52:54:00:aa:bb:02"
+        name: storage-node-2
+        ip: 192.168.100.12
+
+  # Isolated Network Example (Host-Only)
+  # No external connectivity, VMs can only talk to each other and host
+  - name: management-network
+    type: isolated
+    bridge: virbr2
+    ip: 192.168.200.1
+    netmask: 255.255.255.0
+    dhcp_start: 192.168.200.10
+    dhcp_end: 192.168.200.254
+    autostart: true
+
+  # Bridge Network Example
+  # Direct connection to physical network via bridge
+  # Note: Physical bridge must already exist on the host
+  - name: external-bridge
+    type: bridge
+    bridge: br0  # Physical bridge name
+    autostart: true
+
+  # Additional NAT network for application traffic
+  - name: app-network
+    type: nat
+    bridge: virbr3
+    ip: 10.0.0.1
+    netmask: 255.255.255.0
+    dhcp_start: 10.0.0.10
+    dhcp_end: 10.0.0.254
+    autostart: true
+
+# Example: OpenShift cluster with multiple networks
+# Uncomment and customize as needed
+# networks:
+#   - name: ocp-management
+#     type: nat
+#     bridge: virbr10
+#     ip: 192.168.10.1
+#     netmask: 255.255.255.0
+#     dhcp_start: 192.168.10.10
+#     dhcp_end: 192.168.10.50
+#     autostart: true
+#
+#   - name: ocp-storage
+#     type: isolated
+#     bridge: virbr11
+#     ip: 192.168.11.1
+#     netmask: 255.255.255.0
+#     dhcp_start: 192.168.11.10
+#     dhcp_end: 192.168.11.50
+#     autostart: true
+#
+#   - name: ocp-apps
+#     type: isolated
+#     bridge: virbr12
+#     ip: 192.168.12.1
+#     netmask: 255.255.255.0
+#     dhcp_start: 192.168.12.10
+#     dhcp_end: 192.168.12.50
+#     autostart: true

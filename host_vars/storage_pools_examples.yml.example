@@ -1,0 +1,76 @@
+# Example: Custom storage pools configuration
+# By default, all libvirt data is stored in a single location (libvirt_storage_path)
+# You can define additional custom storage pools for different purposes or locations
+
+# Example 1: NVMe storage pool for high-performance VMs
+storage_pools:
+  - name: nvme-pool
+    path: /mnt/nvme/libvirt
+
+# Example 2: Multiple storage pools for different purposes
+storage_pools:
+  - name: nvme-fast
+    path: /mnt/nvme/libvirt
+  - name: ssd-pool
+    path: /mnt/ssd/libvirt
+  - name: archive-pool
+    path: /mnt/archive/libvirt
+
+# Example 3: Custom storage in user home directory
+storage_pools:
+  - name: custom-vms
+    path: /home/jeyoung/custom-libvirt
+
+# Storage pool parameters explained:
+# - name: (required) Unique name for the storage pool
+# - path: (required) Full path to the storage directory
+
+# Notes:
+# 1. Default storage pool is always created at libvirt_storage_path
+#    Default: /home/<user>/libvirt
+# 2. Custom pools are created in addition to the default pool
+# 3. Paths can be anywhere with proper permissions
+# 4. SELinux contexts (virt_image_t) applied automatically
+# 5. Ownership set based on path:
+#    - /home paths: owned by user
+#    - Other paths: owned by root
+# 6. All pools use mode 0711 for directories
+# 7. Pools are set to autostart automatically
+
+# Overriding the default storage path:
+# If you want to change the default location (instead of /home/<user>/libvirt):
+libvirt_storage_path: /mnt/nvme/libvirt
+
+# This will change the default pool location for:
+# - VM disk images
+# - ISO files
+# - Cloud images
+# - Any files not explicitly assigned to a custom pool
+
+# Using custom pools with VMs:
+# After creating custom pools, you can specify which pool to use
+# in VM volume definitions by using the full path:
+vms:
+  - name: high-performance-vm
+    memory: 16384
+    vcpus: 8
+    disk_size: 100
+    volumes:
+      - name: fast-data.qcow2
+        size: 500
+        path: /mnt/nvme/libvirt/high-performance-vm-fast-data.qcow2
+
+  - name: archive-vm
+    memory: 2048
+    vcpus: 2
+    disk_size: 50
+    volumes:
+      - name: archive-data.qcow2
+        size: 1000
+        path: /mnt/archive/libvirt/archive-vm-archive-data.qcow2
+
+# Usage:
+# ansible-playbook -i inventory manage_host_storage.yml
+
+# To create only custom pools:
+# ansible-playbook -i inventory manage_host_storage.yml --tags custom

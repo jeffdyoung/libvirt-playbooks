@@ -1,0 +1,50 @@
+# .gitignore for libvirt-playbooks
+
+# Ansible
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Cache
+.ansible/
+fact_caching/
+/tmp/
+
+# VM related
+*.iso
+*.qcow2
+cloud-images/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+/tmp/
+
+# SSH keys (if stored locally - NOT RECOMMENDED)
+id_rsa
+id_rsa.pub
+
+# Environment files
+.env
+.env.local
+
+# Host-specific configuration (contains sensitive host data)
+# Keep example files, ignore actual configuration
+host_vars/*.yml
+!host_vars/*.yml.example
+!host_vars/README.md
+inventory.yml
+inventory
+!inventory.yml.example

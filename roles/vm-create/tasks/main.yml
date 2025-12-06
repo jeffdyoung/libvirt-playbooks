@@ -1,0 +1,163 @@
+---
+- name: Ensure VM variables are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vm_name | length > 0
+    fail_msg: "vm_name must be defined and not empty"
+  tags:
+    - vm-create
+
+- name: Set default VM parameters
+  ansible.builtin.set_fact:
+    vm_memory_mb: "{{ vm_memory_mb | default(2048) }}"
+    vm_vcpus: "{{ vm_vcpus | default(2) }}"
+    vm_disk_size_gb: "{{ vm_disk_size_gb | default(20) }}"
+    vm_os_variant: "{{ vm_os_variant | default('fedora42') }}"
+    vm_disk_path: "{{ libvirt_storage_path }}/{{ vm_name }}.qcow2"
+  tags:
+    - vm-create
+
+- name: Check if VM already exists
+  community.libvirt.virt:
+    name: "{{ vm_name }}"
+    command: status
+    uri: qemu:///system
+  register: vm_exists
+  failed_when: false
+  changed_when: false
+  tags:
+    - vm-create
+
+- name: Display VM existence status
+  ansible.builtin.debug:
+    msg: "VM {{ vm_name }} already exists"
+  when: vm_exists.status is defined
+  tags:
+    - vm-create
+
+- name: Ensure parent directories allow traversal
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}"
+    state: directory
+    mode: '0711'
+  become: true
+  when: vm_exists.status is not defined
+  tags:
+    - vm-create
+    - disk
+
+- name: Ensure libvirt parent directory exists
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/libvirt"
+    state: directory
+    mode: '0711'
+    owner: "{{ ansible_user }}"
+  become: true
+  when: vm_exists.status is not defined
+  tags:
+    - vm-create
+    - disk
+
+- name: Ensure storage directory exists with proper permissions
+  ansible.builtin.file:
+    path: "{{ libvirt_storage_path }}"
+    state: directory
+    mode: '0711'
+    owner: "{{ ansible_user }}"
+  become: true
+  when: vm_exists.status is not defined
+  tags:
+    - vm-create
+    - disk
+
+- name: Set SELinux context on storage directory
+  ansible.builtin.shell:
+    cmd: |
+      semanage fcontext -a -t virt_image_t "{{ libvirt_storage_path }}(/.*)?" 2>/dev/null || true
+      restorecon -R "{{ libvirt_storage_path }}"
+  become: true
+  when:
+    - vm_exists.status is not defined
+    - ansible_selinux.status == "enabled"
+  ignore_errors: true
+  tags:
+    - vm-create
+    - disk
+
+- name: Build volumes list
+  ansible.builtin.set_fact:
+    vm_volumes_list: >-
+      {{
+        [{'name': vm_name ~ '.qcow2',
+          'path': vm_disk_path,
+          'size': vm_disk_size_gb,
+          'device': 'vda',
+          'format': 'qcow2'}] +
+        (vm_volumes | default([]) | map('combine', {'vm_name': vm_name}) | list)
+      }}
+  tags:
+    - vm-create
+    - disk
+
+- name: Create VM disk images
+  ansible.builtin.shell:
+    cmd: >
+      qemu-img create -f {{ item.format | default('qcow2') }}
+      {{ item.path if item.path is defined else (libvirt_storage_path ~ '/' ~ vm_name ~ '-' ~ item.name) }}
+      {{ item.size }}G
+  become: true
+  loop: "{{ vm_volumes_list }}"
+  when: vm_exists.status is not defined
+  loop_control:
+    label: "{{ item.name | default(item.path) }}"
+  tags:
+    - vm-create
+    - disk
+
+- name: Set disk ownership and permissions
+  ansible.builtin.file:
+    path: "{{ item.path if item.path is defined else (libvirt_storage_path ~ '/' ~ vm_name ~ '-' ~ item.name) }}"
+    owner: qemu
+    group: qemu
+    mode: '0600'
+  become: true
+  loop: "{{ vm_volumes_list }}"
+  when: vm_exists.status is not defined
+  loop_control:
+    label: "{{ item.name | default(item.path) }}"
+  tags:
+    - vm-create
+    - disk
+
+- name: Set SELinux context on disk images
+  ansible.builtin.shell:
+    cmd: restorecon "{{ item.path if item.path is defined else (libvirt_storage_path ~ '/' ~ vm_name ~ '-' ~ item.name) }}"
+  become: true
+  loop: "{{ vm_volumes_list }}"
+  when:
+    - vm_exists.status is not defined
+    - ansible_selinux.status == "enabled"
+  ignore_errors: true
+  loop_control:
+    label: "{{ item.name | default(item.path) }}"
+  tags:
+    - vm-create
+    - disk
+
+- name: Generate VM definition from template
+  ansible.builtin.template:
+    src: vm_definition.xml.j2
+    dest: "/tmp/{{ vm_name }}_definition.xml"
+  register: vm_definition
+  tags:
+    - vm-create
+
+- name: Define VM
+  ansible.builtin.shell:
+    cmd: virsh define /tmp/{{ vm_name }}_definition.xml
+  become: true
+  when: vm_exists.status is not defined
+  tags:
+    - vm-create
+

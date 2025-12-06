@@ -1,0 +1,32 @@
+---
+# Complete workflow playbook combining setup and VM creation
+
+- name: Setup libvirt and create VMs
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: Verify Fedora version
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Fedora'
+          - ansible_distribution_major_version | int >= 42
+        fail_msg: "This playbook requires Fedora 42 or higher"
+
+    - name: Setup libvirt infrastructure
+      ansible.builtin.include_role:
+        name: libvirt-setup
+
+    - name: Create VMs from vm_definitions
+      include_tasks: roles/vm-create/tasks/main.yml
+      vars:
+        vm_name: "{{ item.name }}"
+        vm_memory_mb: "{{ item.memory | default(2048) }}"
+        vm_vcpus: "{{ item.vcpus | default(2) }}"
+        vm_disk_size_gb: "{{ item.disk_size | default(20) }}"
+        vm_autostart: "{{ item.autostart | default(false) }}"
+      loop: "{{ vm_definitions | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: vm_definitions is defined
+      tags:
+        - create-vms

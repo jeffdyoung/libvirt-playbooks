@@ -1,0 +1,68 @@
+# Example: VM with multiple volumes
+# This example shows how to attach additional disk volumes to VMs beyond the primary OS disk
+
+# Example 1: Database server with separate data volumes
+vms:
+  - name: database-server
+    memory: 8192
+    vcpus: 4
+    disk_size: 50  # Primary OS disk (vda) - always created
+    volumes:       # Additional data volumes
+      - name: data01.qcow2
+        size: 100
+        # device: vdb  # Optional - defaults to vdb, vdc, vdd, etc.
+        # format: qcow2  # Optional - defaults to qcow2
+      - name: data02.qcow2
+        size: 200
+        device: vdc
+      - name: logs.qcow2
+        size: 50
+        device: vdd
+
+# Example 2: Application server with custom volume paths
+vms:
+  - name: app-server
+    memory: 4096
+    vcpus: 2
+    disk_size: 30
+    volumes:
+      - name: app-data.qcow2
+        size: 100
+        path: /home/jeyoung/libvirt/images/app-server-data.qcow2  # Custom path
+        device: vdb
+        format: qcow2
+
+# Example 3: Multiple VMs with varying volume configurations
+vms:
+  - name: web-01
+    memory: 2048
+    vcpus: 2
+    disk_size: 20
+    # No additional volumes - just the primary OS disk
+
+  - name: storage-01
+    memory: 4096
+    vcpus: 2
+    disk_size: 40
+    volumes:
+      - name: storage01.qcow2
+        size: 500
+      - name: storage02.qcow2
+        size: 500
+      - name: storage03.qcow2
+        size: 500
+
+# Volume parameters explained:
+# - name: (required) The volume filename (e.g., data01.qcow2)
+# - size: (required) Size in GB
+# - device: (optional) Device name (vdb, vdc, etc.) - auto-assigned if not specified
+# - format: (optional) Disk format (qcow2, raw, etc.) - defaults to qcow2
+# - path: (optional) Full path to volume - defaults to <storage_pool>/<vm_name>-<name>
+
+# Notes:
+# 1. The primary OS disk (vm_disk_size) is always created as vda
+# 2. Additional volumes are assigned vdb, vdc, vdd, etc. in order
+# 3. All volumes inherit the storage pool path unless 'path' is specified
+# 4. Volume paths are constructed as: <storage_pool>/<vm_name>-<volume_name>
+#    Example: /home/jeyoung/libvirt/images/database-server-data01.qcow2
+# 5. You can override the device assignment using the 'device' parameter
